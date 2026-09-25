@@ -64,6 +64,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chat-item .sub { font-size: 12px; color: var(--faint); }
 .chat-item .del { opacity: 0; border: 0; background: none; color: var(--faint); cursor: pointer; padding: 2px 6px; border-radius: 6px; }
 .chat-item:hover .del { opacity: 1; }
+.chat-item .rename { flex: 1; min-width: 0; border: 1px solid var(--accent); border-radius: 7px; padding: 2px 6px; background: var(--panel); font-size: 14px; }
+.earlier { align-self: center; border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 999px; padding: 5px 14px; font-size: 12.5px; cursor: pointer; margin: 4px 0 8px; }
+.earlier:hover { color: var(--text); border-color: var(--accent); }
+.chat-title { background-image: none; }
+.title-wrap:hover .chat-title:not(:focus) { text-decoration: underline dotted var(--faint); text-underline-offset: 4px; }
 .chat-item .del:hover { color: var(--danger); background: var(--panel); }
 .sidebar-foot { border-top: 1px solid var(--line); padding-top: 10px; }
 

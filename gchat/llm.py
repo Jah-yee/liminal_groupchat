@@ -250,9 +250,16 @@ async def list_models():
     """Text-capable models on OpenRouter, cached for an hour."""
     if _models_cache["models"] and time.time() - _models_cache["at"] < 3600:
         return _models_cache["models"]
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(f"{API}/models")
-    response.raise_for_status()
+    # After a failure, don't retry for a while: every reply asks for this list
+    if time.time() - _models_cache.get("failed_at", 0) < 300:
+        raise LLMError("OpenRouter's model list is unavailable (retrying in a few minutes)")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(f"{API}/models")
+        response.raise_for_status()
+    except httpx.HTTPError:
+        _models_cache["failed_at"] = time.time()
+        raise
     models = []
     for m in response.json().get("data", []):
         arch = m.get("architecture") or {}

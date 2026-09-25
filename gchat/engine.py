@@ -7,18 +7,21 @@ back through the loop.
 
 import asyncio
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import os
 import random
 import re
 import time
 
-from . import commands, llm, settings, store
+from . import commands, images, llm, settings, store
 from .identity_memory import IdentityMemory, MemoryFileError
-from .prompts import ILLUSTRATOR, build_system_prompt
+from .prompts import ILLUSTRATOR, TITLE, build_system_prompt
 
 MEMORY_EVERY = 6            # AI messages between memory-formation checks
 UNREMEMBERED_TOKENS = 24000  # context cap per reply when memory is off
+SAVE_DELAY = 0.5            # seconds: saves are batched, then written off the event loop
+TITLE_AFTER = 10            # messages before an untitled chat gets named
 QUIET_ROUNDS = 4            # rounds of nobody speaking before autoplay stops
 IMAGE_WAIT = 120            # seconds to wait for pending images before the next reply
 REPLY_TIMEOUT = 240         # seconds before a reply that never finishes is given up on
@@ -39,6 +42,11 @@ class Engine:
         self.running = False
         self.task = None
         self._save_error = None
+        # One writer thread, so saves land in order and a slow disk (or a file
+        # Dropbox is holding) never stalls the chat
+        self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="save")
+        self._dirty = None           # the chat waiting to be saved
+        self._save_handle = None
         self._memory_problems = set()
         self._memory_refused = set()  # models whose memory requests are refused
         self.limit = 0               # messages this Play/Step should post (0 = no limit)
@@ -96,73 +104,158 @@ class Engine:
         except RuntimeError:
             self.loop = None  # no loop yet (tests); set again when playback starts
         chat_id = settings.get("current_chat")
-        self.chat = store.load(chat_id) if chat_id else None
+        self.chat = self._load(chat_id) if chat_id else None
         if not self.chat:
             chats = store.list_chats()
-            self.chat = store.load(chats[0]["id"]) if chats else None
+            self.chat = self._load(chats[0]["id"]) if chats else None
         if not self.chat:
             self.new_chat()
 
     def _save(self):
-        """Save the open chat. A failed save is reported, never fatal: the
-        chat carries on in memory and the next save tries again."""
+        """Save the open chat soon. Saves within SAVE_DELAY are batched into
+        one, and written on the writer thread. Without a running event loop
+        (tests, startup) it saves straight away."""
         if not self.chat:
             return
+        if self._dirty is not None and self._dirty is not self.chat:
+            self.flush()  # a different chat was waiting: write it first
+        self._dirty = self.chat
         try:
-            store.save(self.chat)
-            self._save_error = None
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self.flush(wait=True)
+        if self._save_handle is None:
+            self._save_handle = loop.call_later(SAVE_DELAY, self.flush)
+
+    def flush(self, wait=False):
+        """Write the pending save now (still on the writer thread)."""
+        if self._save_handle:
+            self._save_handle.cancel()
+            self._save_handle = None
+        chat, self._dirty = self._dirty, None
+        if chat is None:
+            return
+        text = store.serialize(chat)
+        future = self._writer.submit(self._write, chat["id"], text)
+        if wait:
+            future.result()
+
+    def _write(self, chat_id, text):
+        """On the writer thread. A failed save is reported, never fatal: the
+        chat carries on in memory and the next save tries again."""
+        try:
+            store.write(chat_id, text)
+            error = None
         except OSError as e:
-            if self._save_error != str(e):  # say it once, not every message
-                self._save_error = str(e)
-                self._notice(f"couldn't save this chat to disk (will keep trying): {e}",
-                             private=True)
+            error = str(e)
+        self._call_on_loop(self._save_result, error)
+
+    def _load(self, chat_id):
+        """Read a chat from disk after any saves still queued for it."""
+        return self._writer.submit(store.load, chat_id).result()
+
+    @staticmethod
+    def _write_quietly(chat_id, text):
+        try:
+            store.write(chat_id, text)
+        except OSError as e:
+            print(f"[Save] couldn't save chat {chat_id}: {e}")
+
+    def _call_on_loop(self, fn, *args):
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(fn, *args)
+        else:
+            fn(*args)
+
+    def _save_result(self, error):
+        if error and self._save_error != error and self.chat:  # say it once, not every message
+            self._notice(f"couldn't save this chat to disk (will keep trying): {error}", private=True)
+        self._save_error = error
+
+    def shutdown(self):
+        """Stop playback and wait for every pending save to reach disk."""
+        self.pause()
+        self.flush()
+        writer, self._writer = self._writer, ThreadPoolExecutor(max_workers=1, thread_name_prefix="save")
+        writer.shutdown(wait=True)
 
     def _set_current(self, chat):
         self.chat = chat
         self.passed.clear()
         self.typing.clear()
-        settings.update({"current_chat": chat["id"]})
+        settings.update({"current_chat": chat["id"]}, persist=False)
+        self._writer.submit(self._save_settings)
+
+    @staticmethod
+    def _save_settings():
+        try:
+            settings.save()
+        except OSError as e:
+            print(f"[Settings] couldn't save: {e}")
 
     def new_chat(self):
         self.pause()
         chat = store.new_chat()
-        # Carry the cast over, so "new chat" means "new conversation, same people"
+        # A new chat starts with an empty room, but keeps the chat settings
+        # (mode, pace, room prompt, spend cap) from the one you were in
         if self.chat:
-            for m in self.chat["members"]:
-                chat["members"].append(dict(m))
             chat["settings"] = dict(self.chat["settings"])
+        self.flush()
         self._set_current(chat)
         self._save()
         self.emit_snapshot()
 
     def open_chat(self, chat_id):
-        chat = store.load(chat_id)
+        chat = self._load(chat_id)
         if not chat:
             return False
         self.pause()
-        self._save()
+        self.flush()
         self._set_current(chat)
         self.emit_snapshot()
         return True
 
+    def _delete_file(self, chat_id):
+        """Deletes go through the writer thread too, so a save still queued
+        for this chat can't bring the file back afterwards."""
+        if self._dirty is not None and self._dirty["id"] == chat_id:
+            self._dirty = None
+            if self._save_handle:
+                self._save_handle.cancel()
+                self._save_handle = None
+        self._writer.submit(store.delete, chat_id).result()
+
     def delete_chat(self, chat_id):
         if self.chat and self.chat["id"] == chat_id:
             self.pause()
-            store.delete(chat_id)
+            self._delete_file(chat_id)
             remaining = store.list_chats()
             if remaining:
-                self._set_current(store.load(remaining[0]["id"]))
+                self._set_current(self._load(remaining[0]["id"]))
             else:
                 self.chat = None
                 self.new_chat()
                 return
         else:
-            store.delete(chat_id)
+            self._delete_file(chat_id)
+        self.emit_snapshot()
+
+    def rename_chat(self, chat_id, title):
+        """Rename any chat, open or not."""
+        title = (title or "").strip()[:80] or "untitled"
+        if self.chat and self.chat["id"] == chat_id:
+            return self.update_chat(title=title)
+        chat = self._load(chat_id)
+        if not chat:
+            return
+        chat["title"], chat["titled"] = title, True
+        self._writer.submit(self._write_quietly, chat_id, store.serialize(chat)).result()
         self.emit_snapshot()
 
     def update_chat(self, title=None, chat_settings=None):
         if title is not None:
             self.chat["title"] = title.strip()[:80] or "untitled"
+            self.chat["titled"] = True  # you named it: don't auto-title over it
         if chat_settings:
             for key, value in chat_settings.items():
                 if key in store.DEFAULT_CHAT_SETTINGS:
@@ -193,6 +286,15 @@ class Engine:
         for key in ("name", "temperature", "muted", "model", "color", "illustrator", "draw_every"):
             if key in values:
                 member[key] = values[key]
+        self._save()
+        self.emit_snapshot()
+
+    def remove_all_members(self):
+        if not self.chat or not self.chat["members"]:
+            return
+        self.pause()
+        self.chat["members"] = []
+        self._notice("everyone left the chat")
         self._save()
         self.emit_snapshot()
 
@@ -375,6 +477,7 @@ class Engine:
                 self.since_memory += spoke
                 if self.since_memory >= MEMORY_EVERY:
                     self._form_memories(final=False)
+                self._maybe_title(chat)
             else:
                 quiet += 1
                 force = True
@@ -531,16 +634,16 @@ class Engine:
         return conv
 
     def _image_url(self, filename):
+        """A data URL for an image, sized for models (cached: made once)."""
         if filename not in self._image_data:
-            path = os.path.join(settings.MEDIA_DIR, filename)
+            path = images.source_path(filename)
+            if not path:
+                return None
             try:
-                with open(path, "rb") as f:
-                    data = base64.b64encode(f.read()).decode()
+                raw, mime = images.for_model(path)
             except OSError:
                 return None
-            ext = filename.rsplit(".", 1)[-1].lower()
-            mime = {"jpg": "jpeg"}.get(ext, ext)
-            self._image_data[filename] = f"data:image/{mime};base64,{data}"
+            self._image_data[filename] = f"data:{mime};base64,{base64.b64encode(raw).decode()}"
         return self._image_data[filename]
 
     @staticmethod
@@ -949,11 +1052,41 @@ class Engine:
         if self.chat is chat:
             self._emit_message(msg)
             self._save()
+        else:  # you switched chats while it was drawing: save that chat quietly
+            text = store.serialize(chat)
+            self._writer.submit(self._write_quietly, chat["id"], text)
+
+    def _maybe_title(self, chat):
+        """Once an untitled chat gets going, one of its members names it."""
+        if chat.get("titled") or chat["title"] not in ("new chat", "", "untitled"):
+            return
+        talk = [m for m in chat["messages"] if m["kind"] in ("text", "image", "poll")]
+        talkers = [m for m in chat["members"] if not m.get("illustrator")]
+        if len(talk) < TITLE_AFTER or not talkers:
+            return
+        chat["titled"] = True  # one try per chat
+        asyncio.create_task(self._auto_title(chat, random.choice(talkers), talk[-30:]))
+
+    async def _auto_title(self, chat, member, talk):
+        transcript = "\n".join(
+            f"[{m.get('name', '?')}]: " + (m.get("text") or (f"(image: {m['prompt']})" if m.get("prompt") else "(image)"))
+            for m in talk)
+        prompt = [{"role": "user", "content": TITLE.format(transcript=transcript[-6000:])}]
+        record = lambda cost: self._call_on_loop(self._add_cost, cost)
+        try:
+            title = await asyncio.to_thread(llm.complete_sync, member["model"], prompt, 400, record)
+        except llm.LLMError as e:
+            print(f"[Title] {member['name']} couldn't name the chat: {e}")
+            return
+        title = title.strip().splitlines()[0].strip(' "\'*#.').strip()[:60]
+        if not title or chat["title"] not in ("new chat", "", "untitled"):
+            return  # you renamed it in the meantime
+        chat["title"] = title
+        if self.chat is chat:
+            self._save()
         else:
-            try:
-                store.save(chat)
-            except OSError as e:
-                print(f"[Save] couldn't save chat {chat['id']}: {e}")
+            self._writer.submit(self._write_quietly, chat["id"], store.serialize(chat))
+        self.emit_snapshot()
 
     async def _search(self, member, query):
         from .search import web_search

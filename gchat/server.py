@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import llm, settings
+from . import images, llm, settings
 from .engine import Engine
 
 WEB_DIR = os.path.join(settings.APP_DIR, "web")
@@ -23,7 +23,7 @@ async def lifespan(app):
     os.makedirs(settings.MEDIA_DIR, exist_ok=True)
     engine.start()
     yield
-    engine.pause()
+    engine.shutdown()  # writes any pending save
 
 
 app = FastAPI(lifespan=lifespan)
@@ -79,18 +79,31 @@ app.add_middleware(OnlyThisApp)
 
 
 @app.middleware("http")
-async def always_fresh_ui(request, call_next):
-    """Make browsers re-check the UI files on every load, so a `git pull` and
-    restart shows the new version instead of a cached old app.js."""
+async def cache_headers(request, call_next):
+    """UI files: re-checked on every load, so a `git pull` and restart shows
+    the new version. Images: their file names never change (a new picture
+    gets a new name), so browsers keep them rather than asking again."""
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
+    elif path.startswith(("/media/", "/avatars/", "/thumbs/")) and response.status_code == 200:
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
 os.makedirs(settings.MEDIA_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 os.makedirs(settings.AVATARS_DIR, exist_ok=True)
 app.mount("/avatars", StaticFiles(directory=settings.AVATARS_DIR), name="avatars")
+
+
+@app.get("/thumbs/{name}")
+async def thumb(name: str):
+    """A chat-sized copy of an image, made on first request and kept."""
+    path = await asyncio.to_thread(images.thumbnail, name)
+    if not path:
+        raise HTTPException(404, "no such image")
+    return FileResponse(path)
 
 
 @app.get("/")
@@ -153,6 +166,12 @@ async def open_chat(chat_id: str):
     return {"ok": True}
 
 
+@app.patch("/api/chats/{chat_id}")
+async def rename_chat(chat_id: str, values: dict = Body(...)):
+    engine.rename_chat(chat_id, values.get("title", ""))
+    return {"ok": True}
+
+
 @app.patch("/api/chat")
 async def update_chat(values: dict = Body(...)):
     engine.update_chat(values.get("title"), values.get("settings"))
@@ -208,6 +227,12 @@ async def add_member(values: dict = Body(...)):
 @app.patch("/api/members/{member_id}")
 async def update_member(member_id: str, values: dict = Body(...)):
     engine.update_member(member_id, values)
+    return {"ok": True}
+
+
+@app.delete("/api/members")
+async def remove_all_members():
+    engine.remove_all_members()
     return {"ok": True}
 
 

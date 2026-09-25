@@ -16,10 +16,14 @@ RETRIES = 8  # waits of 25ms, 50ms, ... about 3 seconds in total
 
 
 def write_json(path, data, **dump_kwargs):
+    write_text(path, json.dumps(data, **dump_kwargs))
+
+
+def write_text(path, text):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = f"{path}.{uuid.uuid4().hex[:8]}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, **dump_kwargs)
+        f.write(text)
     delay = 0.025
     for _ in range(RETRIES):
         try:
@@ -31,7 +35,7 @@ def write_json(path, data, **dump_kwargs):
     # Still locked: overwrite in place (not atomic, but the data isn't lost)
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, **dump_kwargs)
+            f.write(text)
     finally:
         try:
             os.remove(tmp)

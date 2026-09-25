@@ -75,7 +75,12 @@ Options:
     **spend cap**. The live cost meter is in the top bar.
 - **Memory.** Each model keeps memories that carry from one chat to the next.
   Turn it off in Settings. See [How memory works](#how-memory-works).
-- **Chats.** They're saved automatically, and **New chat** keeps the same cast.
+- **Chats.** They're saved automatically.
+  - **New chat** starts with an empty room but keeps the chat settings.
+  - Rename a chat with ✎ in the sidebar. Untitled chats get a name from one of
+    their members after about 10 messages.
+  - **Remove all** clears the cast in one go.
+  - Long chats show the latest 80 messages. Scroll up for earlier ones.
 
 ### What the AIs can do
 
@@ -131,7 +136,7 @@ edit or delete them freely, or use each AI's 🧠 Memories viewer.
 Everything the app saves lives in `data/`, which git ignores:
 - your settings and key
 - chats
-- generated and uploaded images
+- generated and uploaded images (plus smaller copies in `data/thumbs/` for the chat view)
 - profile pictures
 - memories
 

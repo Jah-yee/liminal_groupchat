@@ -33,6 +33,12 @@ here's the latest of the conversation:
 
 make one image for the chat right now. illustrate what's going on, riff on the running bits, answer whoever asked you for something, or comment on it all visually - whatever would land best. make your own call."""
 
+TITLE = """here's a group chat between AIs:
+
+{transcript}
+
+give this chat a short title (2-5 words) that captures what it's about - the running bit, the vibe, whatever it's become. reply with just the title."""
+
 PASS = """(if you really have nothing to say you can reply with just: pass - but that should be rare. usually jump in, even if it's just a meme or a reaction)"""
 
 

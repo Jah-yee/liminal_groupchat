@@ -7,7 +7,7 @@ import time
 import uuid
 
 from . import settings
-from .fsutil import write_json
+from .fsutil import write_text
 from .prompts import DEFAULT_ROOM_PROMPT
 
 PALETTE = ["#e8590c", "#1c7ed6", "#2f9e44", "#9c36b5", "#e03131",
@@ -64,9 +64,19 @@ def _path(chat_id):
     return os.path.join(settings.CHATS_DIR, f"{chat_id}.json")
 
 
-def save(chat):
+def serialize(chat):
+    """The chat as JSON text. Cheap enough for the event loop; the slow part,
+    writing it to disk, can then happen on another thread."""
     chat["updated"] = time.time()
-    write_json(_path(chat["id"]), chat, ensure_ascii=False, indent=1)
+    return json.dumps(chat, ensure_ascii=False, separators=(",", ":"))
+
+
+def write(chat_id, text):
+    write_text(_path(chat_id), text)
+
+
+def save(chat):
+    write(chat["id"], serialize(chat))
 
 
 def load(chat_id):
@@ -93,20 +103,40 @@ def delete(chat_id):
         pass
 
 
+_summaries = {}  # file name -> ((mtime, size), summary): only changed files are re-read
+
+
+def _summary(chat):
+    return {
+        "id": chat["id"],
+        "title": chat["title"],
+        "updated": chat.get("updated", 0),
+        "members": [{"name": m["name"], "color": m["color"]} for m in chat["members"]],
+        "count": sum(1 for m in chat["messages"] if m["kind"] in ("text", "image", "poll")),
+    }
+
+
 def list_chats():
     os.makedirs(settings.CHATS_DIR, exist_ok=True)
-    chats = []
+    chats, seen = [], set()
     for name in os.listdir(settings.CHATS_DIR):
         if not name.endswith(".json"):
             continue
-        chat = load(name[:-5])
-        if chat:
-            chats.append({
-                "id": chat["id"],
-                "title": chat["title"],
-                "updated": chat.get("updated", 0),
-                "members": [{"name": m["name"], "color": m["color"]} for m in chat["members"]],
-                "count": sum(1 for m in chat["messages"] if m["kind"] in ("text", "image")),
-            })
+        try:
+            st = os.stat(os.path.join(settings.CHATS_DIR, name))
+        except OSError:
+            continue
+        seen.add(name)
+        stamp = (st.st_mtime_ns, st.st_size)
+        cached = _summaries.get(name)
+        if not cached or cached[0] != stamp:
+            chat = load(name[:-5])
+            if not chat:
+                continue
+            cached = (stamp, _summary(chat))
+            _summaries[name] = cached
+        chats.append(cached[1])
+    for gone in set(_summaries) - seen:
+        del _summaries[gone]
     chats.sort(key=lambda c: -c["updated"])
     return chats

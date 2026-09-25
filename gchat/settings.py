@@ -84,14 +84,15 @@ def get(name):
         return _settings.get(name, DEFAULTS.get(name))
 
 
-def update(values):
-    """Apply known settings from a dict and persist them."""
+def update(values, persist=True):
+    """Apply known settings from a dict and (unless told not to) save them."""
     with _lock:
         for key, value in values.items():
             if key in DEFAULTS:
                 _settings[key] = value
         _sync_module_state()
-        save()
+        if persist:
+            save()
         return dict(_settings)
 
 

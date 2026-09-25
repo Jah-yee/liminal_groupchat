@@ -92,6 +92,7 @@ function handle(ev) {
   switch (ev.type) {
     case "snapshot": {
       const chatChanged = state.chat?.id !== ev.chat?.id;
+      if (chatChanged) state.shown = WINDOW;
       Object.assign(state, { settings: ev.settings, chats: ev.chats, chat: ev.chat, running: ev.running });
       state.typing = new Set(ev.typing);
       renderAll(chatChanged);
@@ -169,6 +170,10 @@ function renderChats() {
       el("div", { class: "name" }, c.title),
       el("div", { class: "sub" }, c.count ? `${c.count} messages` : "empty")),
     el("span", {
+      class: "del", title: "Rename chat",
+      onclick: (e) => { e.stopPropagation(); renameInline(e.currentTarget.closest(".chat-item"), c); },
+    }, "✎"),
+    el("span", {
       class: "del", title: "Delete chat",
       onclick: (e) => {
         e.stopPropagation();
@@ -176,6 +181,29 @@ function renderChats() {
       },
     }, "✕"),
   )));
+}
+
+function renameInline(item, chat) {
+  const nameEl = $(".name", item);
+  const input = el("input", { class: "rename", value: chat.title, spellcheck: "false" });
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const title = input.value.trim();
+    if (save && title && title !== chat.title) api("PATCH", `/api/chats/${chat.id}`, { title });
+    else renderChats();
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("blur", () => finish(true));
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
 }
 
 function renderHeader() {
@@ -221,6 +249,21 @@ function renderMembers() {
   if (!members().length) {
     list.append(el("p", { class: "hint", style: "padding: 4px 8px" }, "Nobody here yet. Add a few AIs to get the chat going."));
   }
+  $("#remove-all").hidden = members().length < 2;
+}
+
+// @mentions: one regex per cast, not one per message rendered
+let mentionCache = { key: null, re: null };
+function mentionPattern() {
+  const names = [...new Set([...members().flatMap((m) => [m.name, m.name.split(" ")[0]]), state.settings.username])]
+    .filter((n) => n && n.length >= 3).sort((a, b) => b.length - a.length);
+  const key = names.join("\u0001");
+  if (key !== mentionCache.key) {
+    const esc = (n) => n.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    mentionCache = { key, re: names.length ? new RegExp(`@(${names.map(esc).join("|")})`, "gi") : null };
+  }
+  return mentionCache.re;
 }
 
 // Minimal formatting: escape, then code, bold, italics, links, mentions.
@@ -235,12 +278,9 @@ function format(text) {
     .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, "$1<i>$2</i>")
     .replace(/(https?:\/\/[^\s<]+[^\s<.,)!?])/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-  const names = [...new Set([...members().flatMap((m) => [m.name, m.name.split(" ")[0]]), state.settings.username])]
-    .filter((n) => n && n.length >= 3)
-    .sort((a, b) => b.length - a.length).map((n) => esc(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (names.length) {
-    s = s.replace(new RegExp(`@(${names.join("|")})`, "gi"), '<span class="mention">@$1</span>');
-  }
+  const mention = mentionPattern();
+  if (mention) s = s.replace(mention, '<span class="mention">@$1</span>');
+
   s = s.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
 }
@@ -292,7 +332,7 @@ function messageEl(msg, prev) {
     } else if (msg.status === "error") {
       body = el("div", { class: "image-card error" }, el("div", { class: "caption" }, `🎨 ${msg.prompt || "drawing"} — ${msg.text}`));
     } else {
-      const img = el("img", { src: `/media/${msg.image}`, alt: msg.prompt || msg.text || "image", loading: "lazy", onclick: () => zoom(`/media/${msg.image}`) });
+      const img = el("img", { src: `/thumbs/${msg.image}`, alt: msg.prompt || msg.text || "image", loading: "lazy", decoding: "async", onclick: () => zoom(`/media/${msg.image}`) });
       img.addEventListener("load", () => stickToBottom());
       const caption = msg.prompt ? el("div", { class: "caption" }, msg.prompt)
         : msg.text ? el("div", { class: "caption", html: format(msg.text) }) : null;
@@ -319,21 +359,39 @@ function messageEl(msg, prev) {
     ));
 }
 
+// Long chats render only their latest messages; scrolling to the top (or the
+// button there) brings in earlier ones. Opening a 1000-message chat stays fast.
+const WINDOW = 80;
+state.shown = WINDOW;
+
 function renderMessages(scrollToEnd = true) {
   const box = $("#messages");
   msgEls.clear();
+  const all = (state.chat?.messages || []).filter(visible);
+  const start = Math.max(0, all.length - state.shown);
   const nodes = [];
-  let prev = null;
-  for (const msg of (state.chat?.messages || []).filter(visible)) {
+  if (start > 0) {
+    nodes.push(el("button", { class: "earlier", onclick: showEarlier }, `Show earlier messages (${start})`));
+  }
+  let prev = start > 0 ? all[start - 1] : null;
+  for (const msg of all.slice(start)) {
     const node = messageEl(msg, prev);
     msgEls.set(msg.id, node);
     nodes.push(node);
     prev = msg;
   }
-  if (!nodes.length) nodes.push(emptyState());
+  if (!all.length) nodes.push(emptyState());
   const atBottom = nearBottom();
   box.replaceChildren(...nodes);
   if (scrollToEnd || atBottom) scrollBottom();
+}
+
+function showEarlier() {
+  const box = $("#messages");
+  const fromBottom = box.scrollHeight - box.scrollTop;
+  state.shown += WINDOW * 2;
+  renderMessages(false);
+  box.scrollTop = box.scrollHeight - fromBottom;  // stay where you were
 }
 
 function emptyState() {
@@ -363,7 +421,9 @@ function upsertMessage(msg) {
       const node = messageEl(msg, prev);
       old.replaceWith(node);
       msgEls.set(msg.id, node);
-    } else renderMessages(false);
+    } else if (visible(msg) && list.length - i <= state.shown) {
+      renderMessages(false);
+    }  // otherwise it's above what's shown: the data is updated, nothing to draw
   } else {
     list.push(msg);
     renderChats();
@@ -791,12 +851,20 @@ function wire() {
   $("#open-settings").onclick = () => openSettings();
   $("#open-chat-settings").onclick = openChatSettings;
   $("#add-member").onclick = addMember;
+  $("#remove-all").onclick = () => {
+    const n = members().length;
+    if (n && confirm(`Remove all ${n} members from this chat? Their memories are kept.`)) api("DELETE", "/api/members");
+  };
   $("#toggle-sidebar").onclick = () => toggleDrawer("#sidebar");
   $("#toggle-cast").onclick = () => toggleDrawer("#cast");
   $("#scrim").onclick = closeDrawers;
   $("#lightbox").onclick = () => ($("#lightbox").hidden = true);
   $("#jump").onclick = scrollBottom;
-  $("#messages").addEventListener("scroll", () => { if (nearBottom()) $("#jump").hidden = true; });
+  $("#messages").addEventListener("scroll", () => {
+    const box = $("#messages");
+    if (nearBottom()) $("#jump").hidden = true;
+    if (box.scrollTop < 60 && $(".earlier", box)) showEarlier();
+  });
 
   $("#play").onclick = () => api("POST", `/api/control/${state.running ? "pause" : "play"}`);
   $("#step").onclick = () => api("POST", "/api/control/step");

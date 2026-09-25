@@ -220,15 +220,18 @@ def test_memory_notes_via_commands():
     assert any("Two owes me $5" in m["content"] for m in ctx)
 
 
-def test_chats_persist_and_new_chat_keeps_cast():
+def test_chats_persist_and_new_chat_starts_empty():
     eng, _ = fresh(Script())
     eng.add_member("a/one", "One")
+    eng.update_chat(chat_settings={"mode": "round_robin"})
     first = eng.chat["id"]
     eng.new_chat()
     assert eng.chat["id"] != first
-    assert [m["name"] for m in eng.chat["members"]] == ["One"]
+    assert eng.chat["members"] == [], "a new chat is an empty room"
+    assert eng.chat["settings"]["mode"] == "round_robin", "chat settings carry over"
     assert {c["id"] for c in store.list_chats()} >= {first, eng.chat["id"]}
     assert eng.open_chat(first) and eng.chat["id"] == first
+    assert [m["name"] for m in eng.chat["members"]] == ["One"]
 
 
 def test_next_speaker_waits_for_image_and_sees_it():
@@ -433,19 +436,50 @@ def test_save_failure_does_not_fail_the_reply():
     async def go():
         eng, _ = fresh(Script(default="still here"))
         eng.add_member("a/one", "One")
-        real = store.save
-        store.save = lambda chat: (_ for _ in ()).throw(PermissionError(5, "Access is denied"))
+        real = store.write
+        store.write = lambda chat_id, text: (_ for _ in ()).throw(PermissionError(5, "Access is denied"))
         try:
             eng.step()
             await drain(eng)
+            eng._save()
+            eng.flush(wait=True)
+            eng._save()
+            eng.flush(wait=True)
+            await asyncio.sleep(0.05)  # results come back to the loop
         finally:
-            store.save = real
+            store.write = real
         return eng
     eng = run(go())
     assert ("One", "still here") in texts(eng)
     notices = [m["text"] for m in eng.chat["messages"] if m["kind"] == "notice"]
     assert sum("couldn't save" in n for n in notices) == 1, "reported once"
     assert not any("reply failed" in n for n in notices)
+
+
+def test_saves_are_batched_and_written_off_the_loop():
+    import threading
+    async def go():
+        eng, _ = fresh(Script())
+        eng.add_member("a/one", "One")
+        writes = []
+        real = store.write
+
+        def counting(chat_id, text):
+            writes.append(threading.current_thread().name)
+            real(chat_id, text)
+        store.write = counting
+        try:
+            for i in range(20):
+                eng._new_message("text", "human", f"msg {i}")
+                eng._save()
+            await asyncio.sleep(engine_mod.SAVE_DELAY + 0.3)
+        finally:
+            store.write = real
+        return eng, writes
+    eng, writes = run(go())
+    assert len(writes) == 1, f"20 saves in a burst -> one write, got {len(writes)}"
+    assert writes[0].startswith("save"), "written on the writer thread"
+    assert len(store.load(eng.chat["id"])["messages"]) >= 20
 
 
 def json_load(path):
@@ -716,6 +750,66 @@ def test_date_and_time_awareness():
     settings._settings["time_awareness"] = False
     assert "[now: " not in json_dump(eng._build_messages(one, allow_pass=False))
     settings._settings["time_awareness"] = True
+
+
+def test_rename_remove_all_and_auto_title():
+    async def go():
+        eng, _ = fresh(Script(default="lol"))
+        eng.add_member("a/one", "One")
+        eng.add_member("b/two", "Two")
+        first = eng.chat["id"]
+        eng.new_chat()
+        eng.rename_chat(first, "the orb saga")  # rename a chat that isn't open
+        assert store.load(first)["title"] == "the orb saga"
+        eng.open_chat(first)
+        eng.remove_all_members()
+        assert eng.chat["members"] == []
+        # Auto-title: once an untitled chat gets going, a member names it
+        eng.new_chat()
+        eng.add_member("a/one", "One")
+        asked = []
+
+        def namer(model, messages, max_tokens=4000, on_cost=None):
+            asked.append(messages[0]["content"])
+            return '"The Great Orb Heist"'
+        real = llm.complete_sync
+        llm.complete_sync = namer
+        try:
+            eng.update_chat(chat_settings={"pace": 0, "messages_per_play": engine_mod.TITLE_AFTER + 1})
+            eng.play()
+            await drain(eng)
+            await asyncio.sleep(0.1)
+        finally:
+            llm.complete_sync = real
+        return eng, asked
+    eng, asked = run(go())
+    assert eng.chat["title"] == "The Great Orb Heist" and len(asked) == 1
+    assert "[One]: lol" in asked[0]
+
+
+def test_auto_title_never_overrides_your_name():
+    eng, _ = fresh(Script())
+    eng.add_member("a/one", "One")
+    eng.update_chat(title="my chat")
+    for i in range(20):
+        eng._new_message("text", "human", f"hi {i}")
+    eng._maybe_title(eng.chat)  # would need a running loop if it tried
+    assert eng.chat["title"] == "my chat"
+
+
+def test_thumbnails_and_model_sized_images():
+    from PIL import Image
+    from gchat import images
+    fresh(Script())
+    os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+    Image.frombytes("RGB", (2000, 1500), os.urandom(2000 * 1500 * 3)).save(os.path.join(settings.MEDIA_DIR, "big.png"))
+    thumb = images.thumbnail("big.png")
+    assert thumb.endswith(".webp") and max(Image.open(thumb).size) == images.THUMB_SIDE
+    raw, mime = images.for_model(os.path.join(settings.MEDIA_DIR, "big.png"))
+    assert mime == "image/jpeg"
+    import io
+    assert max(Image.open(io.BytesIO(raw)).size) == images.MODEL_SIDE
+    assert images.thumbnail("../settings.json") is None and images.thumbnail("nope.png") is None
 
 
 if __name__ == "__main__":
