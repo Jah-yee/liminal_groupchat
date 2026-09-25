@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+# Everything the app writes: settings (incl. your API key), chats, images, memories
+data/

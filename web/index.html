@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Liminal Groupchat</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <!-- Chats -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark">💬</span>
+        <span class="brand-name">liminal<b>groupchat</b></span>
+      </div>
+      <button class="btn primary wide" id="new-chat">+ New chat</button>
+      <div class="section-label">Chats</div>
+      <nav class="chat-list" id="chat-list"></nav>
+      <div class="sidebar-foot">
+        <button class="btn ghost wide" id="open-settings">⚙︎ Settings</button>
+      </div>
+    </aside>
+
+    <!-- Conversation -->
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn only-mobile" id="toggle-sidebar" title="Chats">☰</button>
+        <div class="title-wrap">
+          <input class="chat-title" id="chat-title" spellcheck="false" aria-label="Chat title">
+          <div class="subtitle" id="subtitle"></div>
+        </div>
+        <div class="topbar-right">
+          <span class="cost" id="cost" title="What this chat has cost so far on OpenRouter">$0.00</span>
+          <button class="icon-btn" id="open-chat-settings" title="Chat settings">⚙︎</button>
+          <button class="icon-btn only-mobile" id="toggle-cast" title="People">👥</button>
+        </div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite">
+        <div class="empty" id="empty"></div>
+      </section>
+      <button class="jump" id="jump" hidden>new messages ↓</button>
+
+      <div class="typing" id="typing"></div>
+
+      <footer class="composer">
+        <div class="controls">
+          <button class="btn play" id="play">▶ Play</button>
+          <button class="btn ghost" id="step" title="One more message">⏭ Step</button>
+          <select id="mode" title="Who talks when">
+            <option value="natural">Natural</option>
+            <option value="everyone">Everyone decides</option>
+            <option value="round_robin">Round robin</option>
+          </select>
+          <span class="mode-hint" id="mode-hint"></span>
+        </div>
+        <div class="attachment" id="attachment" hidden></div>
+        <form class="input-row" id="composer">
+          <button class="icon-btn attach" type="button" id="attach" title="Add an image (or paste / drop one)">📎</button>
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+          <textarea id="input" rows="1" placeholder="Say something… (!image &quot;…&quot; and !search &quot;…&quot; work too)"></textarea>
+          <button class="btn primary send" type="submit" title="Send (Enter)">➤</button>
+        </form>
+      </footer>
+    </main>
+
+    <!-- People -->
+    <aside class="cast" id="cast">
+      <div class="cast-head">
+        <div class="section-label">In the chat</div>
+      </div>
+      <div class="member-list" id="member-list"></div>
+      <button class="btn ghost wide" id="add-member">+ Add someone</button>
+    </aside>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <dialog class="modal" id="modal"><div id="modal-body"></div></dialog>
+  <div class="lightbox" id="lightbox" hidden><img alt=""></div>
+  <div class="toast" id="toast" hidden></div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
