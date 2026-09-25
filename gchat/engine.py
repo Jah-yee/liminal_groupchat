@@ -959,8 +959,9 @@ class Engine:
             msg = self._new_message("whisper", member["id"], a["text"], to=to)
             self._emit_message(msg)
             return True
-        if cmd.action == "search" and a.get("text"):
-            task = asyncio.create_task(self._search(member, a["text"]))
+        if cmd.action in ("search", "bsky") and a.get("text"):
+            lookup = self._search if cmd.action == "search" else self._bluesky
+            task = asyncio.create_task(lookup(member, a["text"]))
             self.tool_tasks.add(task)
             task.add_done_callback(self.tool_tasks.discard)
             return False
@@ -1093,6 +1094,13 @@ class Engine:
         results = await asyncio.to_thread(web_search, query)
         text = f"🔎 {member['name']} searched \"{query}\"\n{results}"
         self._notice(text)
+        self._save()
+
+    async def _bluesky(self, member, query):
+        from .bluesky import bluesky
+        results = await asyncio.to_thread(bluesky, query)
+        what = f"read {query}'s posts" if query.startswith("@") else f"searched \"{query}\""
+        self._notice(f"🦋 {member['name']} {what} on Bluesky\n{results}")
         self._save()
 
     # ─── memory ─────────────────────────────────────────────────────────

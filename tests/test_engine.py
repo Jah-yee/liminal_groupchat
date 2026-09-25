@@ -818,3 +818,61 @@ if __name__ == "__main__":
         t()
         print(f"ok  {t.__name__}")
     print(f"{len(tests)} passed")
+
+
+def test_bluesky_command():
+    import gchat.bluesky as bsky
+    post = {"uri": "at://did:plc:x/app.bsky.feed.post/3abc", "likeCount": 7, "repostCount": 1,
+            "author": {"handle": "cat.bsky.social", "displayName": "Cat"},
+            "record": {"text": "cats   are\nliquid", "createdAt": "2020-01-01T00:00:00.000Z"}}
+    calls = []
+
+    def fake(url, params=None, body=None, token=None):
+        calls.append((url.rsplit("/", 1)[-1], token))
+        if url.endswith("createSession"):
+            if body["password"] != "good":
+                raise bsky.BlueskyError(401, "Invalid identifier or password")
+            fake.logins += 1
+            return {"accessJwt": f"jwt{fake.logins}", "didDoc": {"service": [
+                {"id": "#atproto_pds", "serviceEndpoint": "https://pds.example"}]}}
+        if url.endswith("getAuthorFeed"):
+            assert params["actor"] == "cat.bsky.social" and token is None
+            return {"feed": [{"post": post}, {"post": post, "reason": {"$type": "repost"}}]}
+        if url.endswith("searchPosts"):
+            if not token:
+                raise bsky.BlueskyError(403, "Forbidden")
+            if token == "jwt1":
+                raise bsky.BlueskyError(400, "ExpiredToken")
+            assert url.startswith("https://pds.example/xrpc/")
+            return {"posts": [post]}
+    fake.logins = 0
+    bsky._request = fake
+    bsky._session.update(key=None, jwt=None, pds=None)
+
+    out = bsky.bluesky("@cat")
+    assert out.count("\n") == 0, "reposts are skipped"
+    assert "@cat.bsky.social (Cat)" in out and "cats are liquid" in out and "♥7 🔁1" in out
+    assert "https://bsky.app/profile/cat.bsky.social/post/3abc" in out and "d ago" in out
+    assert bsky.bluesky("are cats liquid") == bsky.LOGIN_HINT, "search needs a login"
+
+    settings.update({"bsky_handle": "@me.bsky.social", "bsky_app_password": "bad"}, persist=False)
+    assert "login failed" in bsky.bluesky("cats")
+    settings.update({"bsky_app_password": "good"}, persist=False)
+    assert "cats are liquid" in bsky.bluesky("cats")
+    assert fake.logins == 2, "an expired token logs in again once"
+    assert "bsky_app_password" not in settings.public() and settings.public()["has_bsky_password"]
+
+    async def go():
+        script = Script(default="lol")
+        eng, _ = fresh(script)
+        eng.add_member("a/one", "One")
+        settings.update({"bsky_handle": "me.bsky.social", "bsky_app_password": "good"}, persist=False)
+        await eng.human_message('what are people saying !bsky "cats"')
+        await drain(eng)
+        return eng, script
+    eng, script = run(go())
+    settings.update({"bsky_handle": "", "bsky_app_password": ""}, persist=False)
+    notice = next(m["text"] for m in eng.chat["messages"] if m["text"].startswith("🦋"))
+    assert notice.startswith('🦋 you searched "cats" on Bluesky')
+    assert "cats are liquid" in json_dump(script.calls[0][1]), "the next speaker sees the posts"
+    assert commands.parse('!bluesky "@cat"')[1][0].action == "bsky"

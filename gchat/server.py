@@ -30,7 +30,8 @@ app = FastAPI(lifespan=lifespan)
 
 # Settings the browser may change. Paths and internal state stay server-side.
 EDITABLE_SETTINGS = {"api_key", "username", "image_model", "thinking", "memory_enabled",
-                     "show_whispers", "memory_fallback_model", "time_awareness"}
+                     "show_whispers", "memory_fallback_model", "time_awareness",
+                     "bsky_handle", "bsky_app_password"}
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
@@ -136,8 +137,11 @@ async def current_state():
 @app.post("/api/settings")
 async def update_settings(values: dict = Body(...)):
     values = {k: v for k, v in values.items() if k in EDITABLE_SETTINGS}
-    if "api_key" in values and not values["api_key"]:
-        values.pop("api_key")  # blank means "keep the current key"
+    for secret in settings.SECRETS:
+        if secret in values and not values[secret]:
+            values.pop(secret)  # blank means "keep the current one"
+    if values.get("bsky_app_password") == "-":
+        values["bsky_app_password"] = ""  # "-" forgets it
     settings.update(values)
     engine.emit_snapshot()
     return settings.public()

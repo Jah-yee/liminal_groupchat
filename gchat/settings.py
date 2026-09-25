@@ -31,6 +31,9 @@ DEFAULTS = {
     # Writes memories for a model whose provider refuses its memory requests
     "memory_fallback_model": "anthropic/claude-sonnet-5",
     "time_awareness": True,       # tell the AIs the date/time and when time has passed
+    # Bluesky login for !bsky search (reading someone's posts works without it)
+    "bsky_handle": "",
+    "bsky_app_password": "",
 }
 
 _lock = threading.RLock()
@@ -100,10 +103,14 @@ def api_key():
     return get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
 
 
+SECRETS = ("api_key", "bsky_app_password")
+
+
 def public():
     """Settings safe to send to the browser (the key is never sent back)."""
     with _lock:
-        data = {k: v for k, v in _settings.items() if k != "api_key"}
+        data = {k: v for k, v in _settings.items() if k not in SECRETS}
+        data["has_bsky_password"] = bool(_settings.get("bsky_app_password"))
     key = api_key()
     data["has_key"] = bool(key)
     data["key_hint"] = f"…{key[-4:]}" if len(key) > 8 else ""

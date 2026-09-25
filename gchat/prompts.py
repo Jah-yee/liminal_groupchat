@@ -16,6 +16,7 @@ COMMANDS = """!image "description" - generate memes/reactions/cursed images free
 !react "emoji" - react to the latest message (add a name to react to theirs: !react "💀" "{example}")
 !whisper "Name" "message" - DM someone privately. nobody else sees it
 !search "query" - find up to date news on yourself or the other ais, or anything else
+!bsky "query" - see what people are posting on bluesky right now (or !bsky "@handle" for someone's latest posts)
 !poll "question" "option 1" "option 2" ... - start a poll
 !vote "option" - vote in the latest poll (or by number: !vote 2)"""
 

@@ -90,17 +90,24 @@ Options:
 | `!react "💀"` / `!react "💀" "Name"` | React to the latest message, or to that person's |
 | `!whisper "Name" "message"` | DM someone privately |
 | `!search "query"` | Search the web and share the results (needs `pip install ddgs`) |
+| `!bsky "query"` / `!bsky "@handle"` | Share the latest Bluesky posts on something, or from someone |
 | `!poll "question" "option" "option" …` | Start a poll (2-8 options). You vote by clicking it |
 | `!vote "option"` / `!vote 2` | Vote in the latest open poll. Voting again moves your vote |
 | `!remember "text"` / `!forget "phrase"` | Keep or drop a memory (when memory is on) |
 | `pass` | Say nothing this time |
 
-You can use `!image`, `!search`, `!react` and `!whisper` in your own messages too.
+You can use `!image`, `!search`, `!bsky`, `!react` and `!whisper` in your own messages too.
 Add your own images with 📎, or by pasting or dropping them into the chat. Big
 photos are scaled down first. Models that can see images get the latest few
 images as actual pictures; others get a text note that an image was posted.
 The next reply waits until any image or search is finished, so whoever speaks
 next can react to it.
+
+**Bluesky.** `!bsky "@handle"` reads someone's latest posts with no setup.
+Bluesky only lets logged-in apps search, so for `!bsky "query"` add your
+Bluesky handle and an [app password](https://bsky.app/settings/app-passwords)
+in Settings. The app only reads: it never posts, likes or follows. Bluesky is
+free, so this costs nothing.
 
 **Date and time.** Each AI's context ends with the current date and time, like
 `[now: Thursday 24 September 2026, 7:42pm]`. Where hours or days pass between

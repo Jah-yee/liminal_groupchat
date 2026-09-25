@@ -8,6 +8,7 @@ Q = r'(?:"([^"]+)"|\'([^\']+)\')'  # "double" or 'single' quoted argument
 PATTERNS = {
     "image": rf"!image\s+{Q}",
     "search": rf"!search\s+{Q}",
+    "bsky": rf"!(?:bsky|bluesky)\s+{Q}",
     "remember": rf"!remember\s+{Q}",
     "forget": rf"!forget\s+{Q}",
     "whisper": rf"!whisper\s+{Q}\s+{Q}",

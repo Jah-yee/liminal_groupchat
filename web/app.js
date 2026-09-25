@@ -296,7 +296,7 @@ function visible(msg) {
 
 function messageEl(msg, prev) {
   if (msg.kind === "notice") {
-    const isSearch = msg.text.startsWith("🔎");
+    const isSearch = msg.text.startsWith("🔎") || msg.text.startsWith("🦋");
     return el("div", { class: `notice ${msg.private ? "private" : ""} ${isSearch ? "search" : ""}`, "data-id": msg.id }, msg.text);
   }
   const human = msg.author === "human";
@@ -454,7 +454,7 @@ function renderTyping() {
   const passed = $(".passed", box);
   if (!who.length) {
     const waiting = state.waiting && el("span", { class: "waiting" },
-      "⏳ waiting for an image or search to finish before the next reply…");
+      "⏳ waiting for an image or lookup to finish before the next reply…");
     box.replaceChildren(...[waiting, passed].filter(Boolean));
     return;
   }
@@ -536,6 +536,9 @@ function openSettings(firstRun = false) {
   const [whisperRow, whispers] = toggleField("Show whispers", s.show_whispers, "See the private DMs the AIs send each other.");
   const [timeRow, timeAware] = toggleField("Date & time", s.time_awareness !== false,
     "Tell the AIs the current date and time, and when hours or days pass between messages.");
+  const bskyHandle = el("input", { type: "text", value: s.bsky_handle || "", placeholder: "you.bsky.social", autocomplete: "off" });
+  const bskyPassword = el("input", { type: "password", autocomplete: "off",
+    placeholder: s.has_bsky_password ? "saved · paste to replace, - to remove" : "xxxx-xxxx-xxxx-xxxx" });
   const theme = el("select", {}, ...["system", "light", "dark"].map((v) =>
     el("option", { value: v, selected: (localStorage.getItem("theme") || "system") === v }, v)));
 
@@ -547,11 +550,15 @@ function openSettings(firstRun = false) {
     el("div", { class: "row2" }, field("Image model", imageModel, "Used for !image."), field("Theme", theme)),
     field("Memory fallback model", fallback,
       "If a model's provider refuses its memory requests, this model writes its memories for it, in its voice. Leave empty to skip them instead."),
+    el("div", { class: "row2" }, field("Bluesky handle", bskyHandle), field("Bluesky app password", bskyPassword)),
+    el("small", { class: "hint" }, "Optional. Lets !bsky search posts (reading someone's posts with !bsky \"@handle\" works without it). It only reads. Make an app password at ",
+      el("a", { href: "https://bsky.app/settings/app-passwords", target: "_blank" }, "bsky.app/settings/app-passwords"), "."),
   ];
   const save = el("button", { class: "btn primary", onclick: async () => {
     const values = { username: username.value.trim() || "you", thinking: thinking.value,
       image_model: imageModel.value.trim(), memory_enabled: memory.checked, show_whispers: whispers.checked, time_awareness: timeAware.checked,
-      memory_fallback_model: fallback.value.trim() };
+      memory_fallback_model: fallback.value.trim(), bsky_handle: bskyHandle.value.trim().replace(/^@/, "") };
+    if (bskyPassword.value.trim()) values.bsky_app_password = bskyPassword.value.trim();
     if (key.value.trim()) values.api_key = key.value.trim();
     if (firstRun && !values.api_key && !s.has_key) return toast("Paste your OpenRouter key first");
     setTheme(theme.value);
