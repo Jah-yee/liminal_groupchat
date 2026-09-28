@@ -34,6 +34,7 @@ const STARTER_CAST = [
   ["google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"],
   ["openai/gpt-6-astra", "GPT 6 Astra"],
   ["openai/gpt-6-sol", "GPT 6 Sol"],
+  ["openai/gpt-5.4-image-2", "GPT Image", { illustrator: true }],
 ];
 const MODE_HINTS = {
   natural: "whoever's likely to speak does; they can pass",
@@ -243,7 +244,7 @@ function renderMembers() {
         el("div", { class: "model" }, m.model),
         typing ? el("div", { class: "state typing" }, m.illustrator ? "drawing…" : "typing…")
           : m.muted ? el("div", { class: "state" }, "muted")
-          : m.illustrator ? el("div", { class: "state" }, `🎨 illustrator · every ~${m.draw_every || 6} msgs`) : null),
+          : m.illustrator ? el("div", { class: "state" }, `🎨 illustrator · every ~${m.draw_every || 30} msgs`) : null),
     );
   }));
   if (!members().length) {
@@ -616,7 +617,7 @@ async function addMember() {
   const name = el("input", { type: "text", placeholder: "defaults to the model's name" });
   const [illoRow, illo] = toggleField("Illustrator",
     false, "Draws the chat instead of talking: an image every few messages, or when someone @'s them.");
-  const every = el("input", { type: "number", min: 1, value: 6 });
+  const every = el("input", { type: "number", min: 1, value: 30 });
   const everyField = field("Draws every ~N messages", every);
   const syncIllo = () => (everyField.hidden = !illo.checked);
   illo.onchange = syncIllo;
@@ -624,7 +625,7 @@ async function addMember() {
   let chosen = null;
   const add = el("button", { class: "btn primary", disabled: true, onclick: async () => {
     await api("POST", "/api/members", { model: chosen.id, name: name.value.trim() || prettyName(chosen),
-      illustrator: illo.checked, draw_every: Math.max(1, parseInt(every.value || "6", 10)) });
+      illustrator: illo.checked, draw_every: Math.max(1, parseInt(every.value || "30", 10)) });
     closeModal();
   } }, "Add to chat");
 
@@ -669,9 +670,9 @@ async function addMember() {
 async function quickCast() {
   const have = new Set(members().map((m) => m.model));
   let added = 0;
-  for (const [model, name] of STARTER_CAST) {
+  for (const [model, name, extra] of STARTER_CAST) {
     if (have.has(model)) continue;
-    await api("POST", "/api/members", { model, name });
+    await api("POST", "/api/members", { model, name, ...extra });
     added++;
   }
   toast(added ? `Invited ${added} AIs. Press Play!` : "They're all here already.");
@@ -684,7 +685,7 @@ function editMember(m) {
   const [muteRow, muted] = toggleField("Muted", m.muted, "Muted members stay in the chat but don't talk.");
   const [illoRow, illo] = toggleField("Illustrator", !!m.illustrator,
     "Draws the chat instead of talking: an image every few messages, or when someone @'s them.");
-  const every = el("input", { type: "number", min: 1, value: m.draw_every || 6 });
+  const every = el("input", { type: "number", min: 1, value: m.draw_every || 30 });
   const everyField = field("Draws every ~N messages", every);
   illo.onchange = () => (everyField.hidden = !illo.checked);
   everyField.hidden = !illo.checked;
@@ -696,7 +697,7 @@ function editMember(m) {
   const memoryBtn = el("button", { class: "btn", onclick: () => showMemory(m) }, "🧠 Memories");
   const save = el("button", { class: "btn primary", onclick: async () => {
     await api("PATCH", `/api/members/${m.id}`, { name: name.value.trim() || m.name, temperature: +temp.value, muted: muted.checked,
-      illustrator: illo.checked, draw_every: Math.max(1, parseInt(every.value || "6", 10)) });
+      illustrator: illo.checked, draw_every: Math.max(1, parseInt(every.value || "30", 10)) });
     closeModal();
   } }, "Save");
   const picInput = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", hidden: true });

@@ -49,7 +49,7 @@ Options:
   - Open an AI's 🧠 Memories to read, or forget, what it remembers.
 - **Illustrators.** Image models such as `meta/muse-image` can join as
   members that draw instead of talking.
-  - Every ~N messages (default 6), or right away when someone @'s them, they
+  - Every ~N messages (default 30), or right away when someone @'s them, they
     read the recent chat and post one picture of it.
   - Everyone else sees the picture and can react to it.
   - Image-only models are ticked as illustrators automatically when you add

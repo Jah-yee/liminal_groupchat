@@ -41,7 +41,7 @@ def new_chat(title="new chat"):
     }
 
 
-def new_member(chat, model, name, temperature=1.0, illustrator=False, draw_every=6):
+def new_member(chat, model, name, temperature=1.0, illustrator=False, draw_every=30):
     used = {m["color"] for m in chat["members"]}
     color = next((c for c in PALETTE if c not in used), PALETTE[len(chat["members"]) % len(PALETTE)])
     return {

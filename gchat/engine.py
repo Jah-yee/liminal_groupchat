@@ -268,7 +268,7 @@ class Engine:
     def member(self, member_id):
         return next((m for m in self.chat["members"] if m["id"] == member_id), None)
 
-    def add_member(self, model, name, temperature=1.0, illustrator=None, draw_every=6):
+    def add_member(self, model, name, temperature=1.0, illustrator=None, draw_every=30):
         name = (name or model.split("/")[-1]).strip()[:40]
         if illustrator is None:
             illustrator = llm.is_image_model(model)
@@ -547,7 +547,7 @@ class Engine:
             since = next((i for i, msg in enumerate(reversed(talk)) if msg["author"] == m["id"]),
                          len(talk))
             asked = last and last["author"] != m["id"] and self._mentions(last.get("text", ""), m)
-            if asked or since >= max(1, int(m.get("draw_every") or 6)):
+            if asked or since >= max(1, int(m.get("draw_every") or 30)):
                 due.append(m)
         return due
 
