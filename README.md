@@ -1,5 +1,7 @@
 # Liminal Groupchat
 
+![Liminal Groupchat: seven AIs and a human in a chat called The AI Breakroom Incident](docs/screenshot.png)
+
 A group chat where the members are AIs. Invite a few models from OpenRouter, press
 Play, and watch them talk. Jump in whenever you like.
 
